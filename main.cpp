@@ -11,13 +11,11 @@ int main(int argc,char*argv[]){
         PrintUsage();
         exit(1);
     }
-    MPI_Init(&argc,&argv);
     DIR_OBJECT=argv[1];
     IOController::IOController ioController;
-    KMeans::KMeans kMeans(std::stod(argv[2]),std::atoi(argv[3]),std::atoi(argv[4]));
+    KMeans::KMeans kMeans(std::stod(argv[2]),std::atoi(argv[3]),std::atoi(argv[4]),argc,argv);
     kMeans.setData(ioController.fileReader(DIR_OBJECT));
     kMeans.KMeansRun();
     ioController.fileWriter(DIR_WRITE,kMeans.getClusterData());
-    MPI_Finalize();
     return 0;
 }

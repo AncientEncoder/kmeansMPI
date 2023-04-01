@@ -13,7 +13,7 @@ namespace KMeans{
     double euclidean_distance(BasePoint::Point center, BasePoint::Point dot);
     class KMeans{
     public:
-        KMeans(double epsilon,int maxIterations,int clusters);
+    KMeans(double epsilon,int maxIterations,int clusters,int argc,char* argv[]);
         void KMeansRun();
         void setData(const std::vector<BasePoint::Point> &pointsSet);
         const std::vector<std::vector<BasePoint::Point>> &getClusterData();
@@ -29,5 +29,7 @@ namespace KMeans{
         std::vector<BasePoint::Point> center;
         std::vector<BasePoint::Point> points;
         std::vector<std::vector<BasePoint::Point>>clusterData;
+        int argc;
+        char** argv;
     };
 }

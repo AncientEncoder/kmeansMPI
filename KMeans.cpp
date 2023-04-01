@@ -5,10 +5,12 @@
 double KMeans::euclidean_distance(BasePoint::Point center, BasePoint::Point dot){
     return sqrt((center.x-dot.x)*(center.x-dot.x)+(center.y-dot.y)*(center.y-dot.y)+(center.z-dot.z)*(center.z-dot.z));
 }
-KMeans::KMeans::KMeans(double epsilon, int maxIterations, int clusters) {
+KMeans::KMeans::KMeans(double epsilon, int maxIterations, int clusters,int argc,char* argv[]) {
     this->epsilon=epsilon;
     this->clusters=clusters;
     this->maxIterations=maxIterations;
+    this->argc=argc;
+    this->argv=argv;
     std::vector<BasePoint::Point> pt;
     for (int i = 0; i < clusters; ++i) {
         clusterData.push_back(pt);
@@ -45,6 +47,7 @@ void KMeans::KMeans::createClusters() {
     int closedCenterID;
     double minDistance;
     double distance;
+    MPI_Init(&argc,&argv);
     // Get the rank and size of the MPI communicator
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -115,6 +118,7 @@ void KMeans::KMeans::createClusters() {
     for (const auto& point : points) {
         clusterData[point.center].push_back(point);
     }
+    MPI_Finalize();
 }
 
 std::vector<BasePoint::Point> KMeans::KMeans::updateCenter() {
