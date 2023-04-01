@@ -3,5 +3,5 @@ project(kmeansMPI)
 
 set(CMAKE_CXX_STANDARD 11)
 find_package(MPI REQUIRED)
-add_executable(kmeansMPI main.cpp IOController.hpp IOController.cpp KMeans.cpp KMeans.hpp Point.cpp Point.hpp)
+add_executable(kmeansMPI main.cpp)
 target_link_libraries(kmeansMPI PUBLIC MPI::MPI_CXX)
