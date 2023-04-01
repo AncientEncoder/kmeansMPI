@@ -1,6 +1,5 @@
 #include "KMeans.hpp"
 #include <random>
-#include <omp.h>
 #include <mpi.h>
 #include <algorithm>
 #include "IOController.hpp"
@@ -212,4 +211,25 @@ void KMeans::KMeans::gather() {
 
     // 将收集到的点分发到各个进程中
     points_.swap(recv_buffer);
+}
+
+bool KMeans::KMeans::hasConverged() {
+    // 计算本地误差平方和
+    double local_sse = 0.0;
+    for (int i = 0; i < points_.size(); i++) {
+        local_sse += points_[i].distanceSquared(centroids_[points_[i].center]);
+    }
+
+    // 将各进程的本地误差平方和汇总到rank=0的进程中
+    double global_sse;
+    MPI_Reduce(&local_sse, &global_sse, 1, MPI_DOUBLE, MPI_SUM, 0, comm_);
+
+    // 判断是否收敛
+    if (rank_ == 0) {
+        double threshold = epsilon_ * epsilon_ * num_points_;
+        return global_sse <= threshold;
+    }
+    return false;
+
+
 }
