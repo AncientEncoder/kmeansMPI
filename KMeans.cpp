@@ -5,6 +5,9 @@
 #include <algorithm>
 #include "IOController.hpp"
 
+double KMeans::euclidean_distance(BasePoint::Point center, BasePoint::Point dot){
+    return sqrt((center.x-dot.x)*(center.x-dot.x)+(center.y-dot.y)*(center.y-dot.y)+(center.z-dot.z)*(center.z-dot.z));
+}
 KMeans::KMeans::KMeans(int num_procs, int argc, char** argv){
     // 获取输入参数，包括数据集文件名、epsilon、最大迭代次数和K值
     const std::string file_name = argv[1];
@@ -123,49 +126,61 @@ void KMeans::KMeans::scatter() {
     }
 }
 void KMeans::KMeans::update() {
-    // 计算新的质心
-    std::vector<BasePoint::Point> new_centroids = computeCentroids();
+    // 计算全局平均值
+    std::vector<BasePoint::Point> local_centroids(num_clusters_);
+    std::vector<int> local_counts(num_clusters_, 0);
+    for (int i = 0; i < points_.size(); i++) {
+        int cluster_index = points_[i].center;
+        local_centroids[cluster_index].x += points_[i].x;
+        local_centroids[cluster_index].y += points_[i].y;
+        local_centroids[cluster_index].z += points_[i].z;
+        local_counts[cluster_index]++;
+    }
 
-    // 将新质心广播给所有进程
-    MPI_Bcast(new_centroids.data(), num_clusters_, MPI_POINT_, 0, comm_);
-
-    // 计算本地的变化量
-    double local_delta = 0;
+    // 全局聚类中心的缓冲区
+    std::vector<double> centroids_buffer(num_clusters_ * num_features_);
     for (int i = 0; i < num_clusters_; i++) {
-        local_delta += euclidean_distance(new_centroids[i], centroids_[i]);
+        // 每个簇的点数不能为0
+        if (local_counts[i] != 0) {
+            local_centroids[i].x /= local_counts[i];
+            local_centroids[i].y /= local_counts[i];
+            local_centroids[i].z /= local_counts[i];
+        }
+        // 将每个簇的聚类中心拷贝到缓冲区中
+        centroids_buffer[i * num_features_] = local_centroids[i].x;
+        centroids_buffer[i * num_features_ + 1] = local_centroids[i].y;
+        centroids_buffer[i * num_features_ + 2] = local_centroids[i].z;
     }
 
-    // 所有进程的变化量求和，得到全局的变化量
-    double global_delta;
-    MPI_Allreduce(&local_delta, &global_delta, 1, MPI_DOUBLE, MPI_SUM, comm_);
+    // 将各进程的局部聚类中心汇总到rank=0的进程中
+    MPI_Reduce(centroids_buffer.data(), NULL, num_clusters_ * num_features_, MPI_DOUBLE, MPI_SUM, 0, comm_);
 
-    // 如果变化量小于某个阈值，则认为已经收敛
-    if (global_delta < epsilon_) {
-        converged_ = true;
-    }
-    else {
-        // 更新质心
-        centroids_ = new_centroids;
-
-        // 清空cluster_data_，准备下一次聚类
+    // 将全局更新后的聚类中心分发给各个进程
+    if (rank_ == 0) {
+        std::vector<BasePoint::Point> centroids(num_clusters_);
+        int index = 0;
         for (int i = 0; i < num_clusters_; i++) {
-            cluster_data_[i].clear();
+            centroids[i].x = centroids_buffer[index++];
+            centroids[i].y = centroids_buffer[index++];
+            centroids[i].z = centroids_buffer[index++];
         }
-        // 将每个点划分到最近的质心所属的簇中
-        int nearest_cluster;
-        double nearest_distance;
-        for (int i = 0; i < num_points_; i++) {
-            nearest_cluster = -1;
-            nearest_distance = std::numeric_limits<double>::max();
-            for (int j = 0; j < num_clusters_; j++) {
-                double distance = euclidean_distance(points_[i], centroids_[j]);
-                if (distance < nearest_distance) {
-                    nearest_distance = distance;
-                    nearest_cluster = j;
-                }
+        MPI_Bcast(centroids.data(), num_clusters_, MPI_POINT_, 0, comm_);
+        centroids_ = centroids;
+    } else {
+        MPI_Bcast(centroids_.data(), num_clusters_, MPI_POINT_, 0, comm_);
+    }
+
+    // 将所有点的中心重新计算
+    for (int i = 0; i < points_.size(); i++) {
+        double min_distance = std::numeric_limits<double>::max();
+        int min_index = -1;
+        for (int j = 0; j < num_clusters_; j++) {
+            double distance = euclidean_distance(points_[i], centroids_[j]);
+            if (distance < min_distance) {
+                min_distance = distance;
+                min_index = j;
             }
-            points_[i].center = nearest_cluster;
-            cluster_data_[nearest_cluster].push_back(points_[i]);
         }
+        points_[i].center = min_index;
     }
 }
