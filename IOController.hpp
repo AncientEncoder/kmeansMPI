@@ -9,8 +9,8 @@ namespace IOController{
 
     class IOController{
     public:
-        std::vector<BasePoint::Point> fileReader(const std::string &fileName);
-        void fileWriter(const std::string&fileName,std::vector<std::vector<BasePoint::Point>>clusterData);
+        static std::vector<BasePoint::Point> fileReader(const std::string &fileName);
+        static void fileWriter(const std::string&fileName,std::vector<std::vector<BasePoint::Point>>clusterData);
     };
 
 }

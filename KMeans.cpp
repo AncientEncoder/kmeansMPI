@@ -2,209 +2,170 @@
 #include <random>
 #include <omp.h>
 #include <mpi.h>
-double KMeans::euclidean_distance(BasePoint::Point center, BasePoint::Point dot){
-    return sqrt((center.x-dot.x)*(center.x-dot.x)+(center.y-dot.y)*(center.y-dot.y)+(center.z-dot.z)*(center.z-dot.z));
-}
-KMeans::KMeans::KMeans(double epsilon, int maxIterations, int clusters,int argc,char* argv[]) {
-    this->epsilon=epsilon;
-    this->clusters=clusters;
-    this->maxIterations=maxIterations;
-    this->argc=argc;
-    this->argv=argv;
-    std::vector<BasePoint::Point> pt;
-    for (int i = 0; i < clusters; ++i) {
-        clusterData.push_back(pt);
-    }
-}
+#include <algorithm>
+#include "IOController.hpp"
 
-void KMeans::KMeans::getRandomCenter() {
-    center.clear();
-    //----partly random center---------------------------------------------------//
-    long areaLower=0;
-    long areaUpper=points.size()/clusters;
-    long areaAdder=areaUpper;
+KMeans::KMeans::KMeans(int num_procs, int argc, char** argv){
+    // 获取输入参数，包括数据集文件名、epsilon、最大迭代次数和K值
+    const std::string file_name = argv[1];
+    double epsilon = std::stod(argv[2]);
+    int max_iterations = std::stoi(argv[3]);
+    int k = std::stoi(argv[4]);
 
-    for (int i = 0; i < clusters; ++i) {
-        std::uniform_int_distribution<long long> dist(areaLower, areaUpper);
-        auto param=points[dist(rand_num)];
-        param.center=i;
-        center.push_back(param);
-        areaLower+=areaAdder;
-        areaUpper+=areaAdder;
-    }
-    //-------------------full random center--------------
+    // 读取数据集文件，将点存入points_向量中
+    points_=IOController::IOController::fileReader(file_name);
 
-    //    std::uniform_int_distribution<long long> dist(0, points.size());
-    //    for (int i = 0; i < clusters; ++i) {
-    //        auto param=points[dist(rand_num)];
-    //        param.center=i;
-    //        center.push_back(param);
-    //    }
+
+    // 初始化KMeans对象的数据成员
+    epsilon_ = epsilon;
+    max_iterations_ = max_iterations;
+    k_ = k;
+    num_procs_ = num_procs;
+    rank_ = -1;
+
+    // 创建MPI类型
+    MPI_Type_contiguous(4, MPI_DOUBLE, &MPI_POINT_);
+    MPI_Type_commit(&MPI_POINT_);
 }
 
-void KMeans::KMeans::createClusters() {
-    // Define variables
-    int closedCenterID;
-    double minDistance;
-    double distance;
-    MPI_Init(&argc,&argv);
-    // Get the rank and size of the MPI communicator
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+KMeans::KMeans::~KMeans() {
+    // 释放MPI类型
+    MPI_Type_free(&MPI_POINT_);
+}
 
-    // Divide the points equally among processes
-    int points_per_proc = points.size() / size;
-    int remainder = points.size() % size;
-    int start, end;
-    if (rank < remainder) {
-        start = rank * (points_per_proc + 1);
-        end = start + points_per_proc;
-    } else {
-        start = rank * points_per_proc + remainder;
-        end = start + points_per_proc - 1;
+void KMeans::KMeans::initialize() {
+    // 获取当前进程的MPI通信器和进程编号
+    comm_ = MPI_COMM_WORLD;
+    MPI_Comm_rank(comm_, &rank_);
+
+    // 获取数据集的总点数和特征数
+    num_points_ = points_.size();
+    num_features_ = 3;
+
+    // 计算每个进程负责处理的数据点数
+    int points_per_process = num_points_ / num_procs_;
+    int leftover_points = num_points_ % num_procs_;
+
+    // 分配每个进程需要处理的数据点的数量
+    int* sendcounts = new int[num_procs_];
+    int* displs = new int[num_procs_];
+    for (int i = 0; i < num_procs_; i++) {
+        sendcounts[i] = points_per_process * num_features_;
+        if (leftover_points > 0) {
+            sendcounts[i] += num_features_;
+            leftover_points--;
+        }
+        displs[i] = i * points_per_process * num_features_;
     }
 
-    // Define arrays for storing the closest center ID and distance for each point
-    int *closedCenterIDs = new int[points_per_proc];
-    double *minDistances = new double[points_per_proc];
+    // 创建每个进程的本地数据点向量
+    std::vector<BasePoint::Point> local_points(sendcounts[rank_] / num_features_);
 
-    // Loop through points assigned to this process
-    for (int i = start; i <= end; i++) {
-        closedCenterID = 0;
-        minDistance = euclidean_distance(points[i], center[0]);
+    // 将每个进程需要处理的数据点分发给各个进程
+    MPI_Scatterv(points_.data(), sendcounts, displs, MPI_POINT_,
+                 local_points.data(), sendcounts[rank_], MPI_POINT_, 0, comm_);
 
-        // Find the closest center
-        for (int j = 1; j < clusters; j++) {
-            distance = euclidean_distance(points[i], center[j]);
-            if (distance < minDistance) {
-                minDistance = distance;
-                closedCenterID = j;
+    // 计算初始质心
+    if (rank_ == 0) {
+        std::shuffle(points_.begin(), points_.end(), rand_num);
+        centroids_.resize(k_);
+        for (int i = 0; i < k_; i++) {
+            centroids_[i] = points_[i];
+        }
+    }
+
+    // 广播初始质心到所有进程
+    MPI_Bcast(centroids_.data(), k_, MPI_POINT_, 0, comm_);
+
+    // 初始化每个聚类的数量
+    counts_.resize(k_);
+
+    // 创建每个进程的本地簇数据向量
+    cluster_data_.resize(k_);
+    for (int i = 0; i < k_; i++) {
+        cluster_data_[i] = std::vector<BasePoint::Point>();
+    }
+
+    // 释放内存
+    delete[] sendcounts;
+    delete[] displs;
+}
+
+void KMeans::KMeans::scatter() {
+    // 每个进程分配到的点数
+    int points_per_proc = num_points_ / num_procs_;
+    // 每个进程需要接收的点数
+    int recv_counts[num_procs_];
+    // 每个进程需要接收的点的位移量
+    int displs[num_procs_];
+    for (int i = 0; i < num_procs_; i++) {
+        recv_counts[i] = points_per_proc;
+        if (i == num_procs_ - 1) { // 最后一个进程
+            recv_counts[i] += num_points_ % num_procs_;
+        }
+        displs[i] = i * points_per_proc;
+    }
+
+    // 每个进程接收自己分配到的点
+    std::vector<BasePoint::Point> recv_buffer(points_per_proc);
+    MPI_Scatterv(points_.data(), recv_counts, displs, MPI_POINT_, recv_buffer.data(), recv_counts[rank_], MPI_POINT_, 0, comm_);
+
+    // 将接收的点存储到cluster_data_数组中
+    cluster_data_.resize(num_clusters_);
+    for (int i = 0; i < num_clusters_; i++) {
+        cluster_data_[i].resize(counts_[rank_]);
+    }
+    int cluster_index;
+    for (int i = 0; i < points_per_proc; i++) {
+        cluster_index = rand_num() % num_clusters_; // 随机选择一个簇
+        recv_buffer[i].center = cluster_index;
+        cluster_data_[cluster_index][i] = recv_buffer[i];
+    }
+}
+void KMeans::KMeans::update() {
+    // 计算新的质心
+    std::vector<BasePoint::Point> new_centroids = computeCentroids();
+
+    // 将新质心广播给所有进程
+    MPI_Bcast(new_centroids.data(), num_clusters_, MPI_POINT_, 0, comm_);
+
+    // 计算本地的变化量
+    double local_delta = 0;
+    for (int i = 0; i < num_clusters_; i++) {
+        local_delta += euclidean_distance(new_centroids[i], centroids_[i]);
+    }
+
+    // 所有进程的变化量求和，得到全局的变化量
+    double global_delta;
+    MPI_Allreduce(&local_delta, &global_delta, 1, MPI_DOUBLE, MPI_SUM, comm_);
+
+    // 如果变化量小于某个阈值，则认为已经收敛
+    if (global_delta < epsilon_) {
+        converged_ = true;
+    }
+    else {
+        // 更新质心
+        centroids_ = new_centroids;
+
+        // 清空cluster_data_，准备下一次聚类
+        for (int i = 0; i < num_clusters_; i++) {
+            cluster_data_[i].clear();
+        }
+        // 将每个点划分到最近的质心所属的簇中
+        int nearest_cluster;
+        double nearest_distance;
+        for (int i = 0; i < num_points_; i++) {
+            nearest_cluster = -1;
+            nearest_distance = std::numeric_limits<double>::max();
+            for (int j = 0; j < num_clusters_; j++) {
+                double distance = euclidean_distance(points_[i], centroids_[j]);
+                if (distance < nearest_distance) {
+                    nearest_distance = distance;
+                    nearest_cluster = j;
+                }
             }
+            points_[i].center = nearest_cluster;
+            cluster_data_[nearest_cluster].push_back(points_[i]);
         }
-
-        // Store the closest center ID and distance
-        closedCenterIDs[i - start] = closedCenterID;
-        minDistances[i - start] = minDistance;
     }
-
-    // Gather the closest center IDs and distances from all processes
-    int *globalClosedCenterIDs = new int[points.size()];
-    double *globalMinDistances = new double[points.size()];
-    MPI_Allgather(closedCenterIDs, points_per_proc, MPI_INT, globalClosedCenterIDs, points_per_proc, MPI_INT, MPI_COMM_WORLD);
-    MPI_Allgather(minDistances, points_per_proc, MPI_DOUBLE, globalMinDistances, points_per_proc, MPI_DOUBLE, MPI_COMM_WORLD);
-
-    // Update the points' centers with the closest center ID
-    for (int i = 0; i < points.size(); i++) {
-        if (globalMinDistances[i] < minDistances[i - start] || globalClosedCenterIDs[i] == -1) {
-            minDistances[i - start] = globalMinDistances[i];
-            closedCenterIDs[i - start] = globalClosedCenterIDs[i];
-        }
-        points[i].center = closedCenterIDs[i - start];
-    }
-
-    // Free memory
-    delete[] closedCenterIDs;
-    delete[] minDistances;
-    delete[] globalClosedCenterIDs;
-    delete[] globalMinDistances;
-
-    // Clear cluster data
-    for (int i = 0; i < clusters; i++) {
-        clusterData[i].clear();
-    }
-
-    // Assign points to their corresponding clusters
-    for (const auto& point : points) {
-        clusterData[point.center].push_back(point);
-    }
-    MPI_Finalize();
 }
-
-std::vector<BasePoint::Point> KMeans::KMeans::updateCenter() {
-    std::vector<BasePoint::Point> newCenter;
-    BasePoint::Point paramPoint;
-    for (int i = 0; i < clusterData.size(); ++i) {
-        paramPoint.initToZero();
-//#pragma omp parallel for shared(paramPoint,i) default(none)
-        for (int j = 0; j < clusterData[i].size(); ++j) {
-            paramPoint.x+=clusterData[i][j].x;
-            paramPoint.y+=clusterData[i][j].y;
-            paramPoint.z+=clusterData[i][j].z;
-            paramPoint.center=clusterData[i][j].center;
-        }
-        paramPoint.x=paramPoint.x/double(clusterData[i].size());
-        paramPoint.y=paramPoint.y/double(clusterData[i].size());
-        paramPoint.z=paramPoint.z/double(clusterData[i].size());
-        newCenter.push_back(paramPoint);
-    }
-    return newCenter;
-}
-
-bool KMeans::KMeans::hasCloseCenterBellowEpsilon(BasePoint::Point center, const std::vector<BasePoint::Point> &newCenters){
-    bool belowEpsilon= false;
-    for(const auto&newCenter:newCenters){
-        if (euclidean_distance(center,newCenter)<=epsilon){
-            belowEpsilon= true;
-        }
-    }
-    return belowEpsilon;
-}
-
-bool KMeans::KMeans::convergence(const std::vector<BasePoint::Point> &newCenters) {
-    bool conv= true;
-//#pragma omp parallel for  shared(newCenters,conv) default(none)
-    for (int i = 0; i < center.size(); ++i) {
-        if(!hasCloseCenterBellowEpsilon(center[i], newCenters)){
-            conv= false;
-        }
-    }
-    if (conv){
-        std::cout<<"---------successfully converged---------------"<<std::endl;
-    }
-    return conv;
-}
-void KMeans::KMeans::setData(const std::vector<BasePoint::Point> &pointsSet) {
-    this->points=pointsSet;
-}
-void KMeans::KMeans::KMeansRun() {
-    double start,end,average,fStart,fStop;
-    average=0.0;
-    getRandomCenter();
-    createClusters();
-    std::cout<<"=> Data size: ["<<points.size()<<"]"<< std::endl;
-    for (int i = 0; i < maxIterations; ++i) {
-        start=MPI_Wtime();
-        auto newCenters=updateCenter();
-        if (convergence(newCenters)){
-            break;
-        }
-        //std::cout<<"Iteration: "<<i<<" th Center update"<<std::endl;
-        center.clear();
-        center=newCenters;
-        for (auto &clusterEle:clusterData){
-            clusterEle.clear();
-        }
-        createClusters();
-        end=MPI_Wtime()-start;
-        //std::cout<<"Iteration time (s):"<<end<<std::endl;
-        if (i==0){
-            average=end;
-        } else{
-            average=(average+end)/2;
-        }
-    }
-    fStop=MPI_Wtime()-fStart;
-    std::cout<<"--------------------------------------------------"<<std::endl;
-    std::cout<<"*  Iteration end average time (s): "<<average<<"  "<<std::endl;
-    std::cout<<"*  Iteration total time (s): "<<fStop<<"          "<<std::endl;
-    std::cout<<"--------------------------------------------------"<<std::endl;
-
-}
-
-const std::vector<std::vector<BasePoint::Point>> &KMeans::KMeans::getClusterData() {
-    return clusterData;
-}
-
-
-
