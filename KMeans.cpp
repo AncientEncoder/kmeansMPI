@@ -25,7 +25,7 @@ KMeans::KMeans::KMeans(int num_procs, int argc, char** argv){
     k_ = k;
     num_procs_ = num_procs;
     rank_ = -1;
-
+    size_=points_.size();
     // 创建MPI类型
     MPI_Type_contiguous(4, MPI_DOUBLE, &MPI_POINT_);
     MPI_Type_commit(&MPI_POINT_);
@@ -183,4 +183,33 @@ void KMeans::KMeans::update() {
         }
         points_[i].center = min_index;
     }
+}
+void KMeans::KMeans::gather() {
+    // 计算每个进程需要发送的点数
+    int num_local_points = points_.size();
+    std::vector<int> send_counts(size_, 0);
+    MPI_Allgather(&num_local_points, 1, MPI_INT, send_counts.data(), 1, MPI_INT, comm_);
+
+    // 计算每个进程需要接收的点数
+    std::vector<int> recv_counts(size_);
+    MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT, comm_);
+
+    // 计算发送和接收的点的起始位置
+    std::vector<int> send_displs(size_);
+    std::vector<int> recv_displs(size_);
+    int send_displ = 0, recv_displ = 0;
+    for (int i = 0; i < size_; i++) {
+        send_displs[i] = send_displ;
+        recv_displs[i] = recv_displ;
+        send_displ += send_counts[i];
+        recv_displ += recv_counts[i];
+    }
+
+    // 将所有点收集到rank=0的进程中
+    std::vector<BasePoint::Point> recv_buffer(recv_displ);
+    MPI_Alltoallv(points_.data(), send_counts.data(), send_displs.data(), MPI_POINT_, recv_buffer.data(),
+                  recv_counts.data(), recv_displs.data(), MPI_POINT_, comm_);
+
+    // 将收集到的点分发到各个进程中
+    points_.swap(recv_buffer);
 }

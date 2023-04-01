@@ -31,6 +31,7 @@ namespace KMeans{
         int num_points_;
         int num_features_;
         int num_clusters_;
+        int size_;
         int max_iterations_;
         bool converged_;
         std::vector<BasePoint::Point> points_;
