@@ -25,10 +25,11 @@ int main(int argc,char*argv[]){
         kmeans->setData(ioController.fileReader(DIR_OBJECT));
         kmeans->KMeansRun();
         ioController.fileWriter(DIR_WRITE,kmeans->getClusterData());
-        delete kmeans;
 
-        MPI_Finalize();
     }
+    delete kmeans;
+
+    MPI_Finalize();
     //KMeans::KMeans kMeans(std::stod(argv[2]),std::atoi(argv[3]),std::atoi(argv[4]),argc,argv);
 
     return 0;
