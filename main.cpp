@@ -12,9 +12,9 @@ float **array(int m,int n);
 void writeData(float **dataArray,int *inCluster,int N);
 float **loadData(const std::string &fileName,int size);
 float getDistance(float vector1[], float point2[], int n);
-void cluster(int n,int k,int d,float **data,float **cluster_center,int *local_in_cluster);
-float getDifference(int k,int n,int d,int *in_cluster,float **data,float **cluster_center,float *sum);
-void getCenter(int k,int d,int n,int *in_cluster,float **data,float **cluster_center);
+void cluster(int n,int k,int d,float **data,float **cluster_center,int *localInCluster);
+float getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum);
+void getCenter(int k,int d,int n,int *in_cluster,float **data,float **clusterCenter);
 BasePoint::Point dataCutter(std::string str);
 int  main(int argc,char *argv[]){
     int i,j,it;
@@ -23,15 +23,15 @@ int  main(int argc,char *argv[]){
     int loop=0;
     MPI_Status status;
     float temp1,temp2;
-    int K,N,D;  //聚类的数目，数据量，数据的维数
-    float **data;  //存放数据
-    int *all_in_cluster;  //进程0标记每个点属于哪个聚类
-    int *local_in_cluster;  //其他进程标记每个点属于哪个聚类
-    int *in_cluster;  //进程0标记每个点属于哪个聚类
+    int K,N,D;  //K ,data size
+    float **data;  //image data
+    int *allInCluster;  //root mark
+    int *localInCluster;  //process mark
+    int *inCluster;  //mark rcv
     int count=0;
-    float *sum_diff;
-    float *global_sum_diff;
-    float **cluster_center;  //存放每个聚类的中心点
+    float *sumDiff;
+    float *globalSumDiff;
+    float **clusterCenter;  //center save
     int rank,size;
 
 
@@ -44,95 +44,95 @@ int  main(int argc,char *argv[]){
         N=std::atoi(argv[5]);
         epsilon=std::atoi(argv[2]);
         loop=std::atoi(argv[3]);
-        data=loadData(argv[1],std::atoi(argv[5]));  //进程0读入数据
+        data=loadData(argv[1],std::atoi(argv[5]));  //rd data
         if(size==1||size>N||N%(size-1)){
             std::cout<<"error k exit!";
-            MPI_Abort(MPI_COMM_WORLD,1);  //若不满足条件则退出
+            MPI_Abort(MPI_COMM_WORLD,1);  //exit while impossible to divide data
         }
     }
-    MPI_Bcast(&K,1,MPI_INT,0,MPI_COMM_WORLD);  //进程0广播
+    MPI_Bcast(&K,1,MPI_INT,0,MPI_COMM_WORLD);  //BCast from root
     MPI_Bcast(&N,1,MPI_INT,0,MPI_COMM_WORLD);
     MPI_Bcast(&D,1,MPI_INT,0,MPI_COMM_WORLD);
     if(rank){
-        data=array(N/(size-1),D);  //其他进程分配存储数据集的空间
+        data=array(N/(size-1),D);  //process malloc
     }
-    all_in_cluster=(int *)malloc(N/(size-1)*size*sizeof(int));  //用于进程0
-    local_in_cluster=(int *)malloc(N/(size-1)*sizeof(int));  //用于每个进程
-    in_cluster=(int *)malloc(N*sizeof(int));  //用于进程0
-    sum_diff=(float *)malloc(K*sizeof(float));  //进程中每个聚类的数据点与其中心点的距离之和
-    global_sum_diff=(float *)malloc(K*sizeof(float));
+    allInCluster=(int *)malloc(N / (size - 1) * size * sizeof(int));  //root
+    localInCluster=(int *)malloc(N / (size - 1) * sizeof(int));  //process
+    inCluster=(int *)malloc(N * sizeof(int));  //process 0
+    sumDiff=(float *)malloc(K * sizeof(float));  //calc distance
+    globalSumDiff=(float *)malloc(K * sizeof(float));
     for(i=0;i<K;i++){
-        sum_diff[i]=0.0;  //初始化
+        sumDiff[i]=0.0;  //init
     }
 
-    if(!rank){//进程0向其他进程分配数据集
+    if(!rank){//give away data
         for(i=0;i<N;i+=(N/(size-1))){
             for(j=0;j<(N/(size-1));j++){
                 MPI_Send(data[i+j],D,MPI_FLOAT,(i+j)/(N/(size-1))+1,99,MPI_COMM_WORLD);
             }
         }
-    }else{  //其他进程接收进程0数据
+    }else{  //recv data from root
         for(i=0;i<(N/(size-1));i++){
             MPI_Recv(data[i],D,MPI_FLOAT,0,99,MPI_COMM_WORLD,&status);
         }
 
     }
-    MPI_Barrier(MPI_COMM_WORLD);  //同步
+    MPI_Barrier(MPI_COMM_WORLD);  //sync
     start=MPI_Wtime();
-    cluster_center=array(K,D);  //中心点
-    if(!rank){  //进程0产生随机中心点
-        srand((unsigned int)(time(NULL)));  //随机初始化k个中心点
+    clusterCenter=array(K, D);  //center
+    if(!rank){  //rand center
+        srand((unsigned int)(time(NULL)));
         for(i=0;i<K;i++){
             for(j=0;j<D;j++){
-                cluster_center[i][j]=data[(int)((double)N*rand()/(RAND_MAX+1.0))][j];
+                clusterCenter[i][j]=data[(int)((double)N * rand() / (RAND_MAX + 1.0))][j];
             }
         }
 
     }
     for(i=0;i<K;i++){
-        MPI_Bcast(cluster_center[i],D,MPI_FLOAT,0,MPI_COMM_WORLD);  //进程0向其他进程广播中心点
+        MPI_Bcast(clusterCenter[i], D, MPI_FLOAT, 0, MPI_COMM_WORLD);  //BCast center
     }
     if(rank){
-        cluster(N/(size-1),K,D,data,cluster_center,local_in_cluster);  //其他进程进行聚类
-        getDifference(K,N/(size-1),D,local_in_cluster,data,cluster_center,sum_diff);
+        cluster(N/(size-1), K, D, data, clusterCenter, localInCluster);  //process start it
+        getDifference(K,N/(size-1), D, localInCluster, data, clusterCenter, sumDiff);
     }
-    MPI_Gather(local_in_cluster,N/(size-1),MPI_INT,all_in_cluster,N/(size-1),MPI_INT,0,MPI_COMM_WORLD);  //全收集于进程0
-    MPI_Reduce(sum_diff,global_sum_diff,K,MPI_FLOAT,MPI_SUM,0,MPI_COMM_WORLD);  //归约至进程0,进程中每个聚类的数据点与其中心点的距离之和
+    MPI_Gather(localInCluster, N / (size - 1), MPI_INT, allInCluster, N / (size - 1), MPI_INT, 0, MPI_COMM_WORLD);  //root rcv data
+    MPI_Reduce(sumDiff, globalSumDiff, K, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);  //calc
     if(!rank){
         for(i=N/(size-1);i<N+N/(size-1);i++){
-            in_cluster[i-N/(size-1)]=all_in_cluster[i];  //处理收集的标记数组
+            inCluster[i - N / (size - 1)]=allInCluster[i];  //deal with marked data
         }
         temp1=0.0;
-        for(i=0;i<K;i++) temp1+=global_sum_diff[i];
+        for(i=0;i<K;i++) temp1+=globalSumDiff[i];
         count++;
     }
     MPI_Bcast(&temp1,1,MPI_FLOAT,0,MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
 
-    do{   //比较前后两次迭代，若不相等继续迭代
+    do{   //main loop
         temp1=temp2;
-        if(!rank)    getCenter(K,D,N,in_cluster,data,cluster_center);  //更新中心点
-        for(i=0;i<K;i++)    MPI_Bcast(cluster_center[i],D,MPI_FLOAT,0,MPI_COMM_WORLD);  //广播中心点
+        if(!rank)    getCenter(K, D, N, inCluster, data, clusterCenter);  //update center
+        for(i=0;i<K;i++)    MPI_Bcast(clusterCenter[i], D, MPI_FLOAT, 0, MPI_COMM_WORLD);  //BCast center
         if(rank){
-            cluster(N/(size-1),K,D,data,cluster_center,local_in_cluster);  //其他进程进行聚类
-            for(i=0;i<K;i++)    sum_diff[i]=0.0;
-            getDifference(K,N/(size-1),D,local_in_cluster,data,cluster_center,sum_diff);
+            cluster(N/(size-1), K, D, data, clusterCenter, localInCluster);
+            for(i=0;i<K;i++) sumDiff[i]=0.0;
+            getDifference(K,N/(size-1), D, localInCluster, data, clusterCenter, sumDiff);
         }
-        MPI_Gather(local_in_cluster,N/(size-1),MPI_INT,all_in_cluster,N/(size-1),MPI_INT,0,MPI_COMM_WORLD);
+        MPI_Gather(localInCluster, N / (size - 1), MPI_INT, allInCluster, N / (size - 1), MPI_INT, 0, MPI_COMM_WORLD);
         if(!rank)
-            for(i=0;i<K;i++)    global_sum_diff[i]=0.0;
-        MPI_Reduce(sum_diff,global_sum_diff,K,MPI_FLOAT,MPI_SUM,0,MPI_COMM_WORLD);
+            for(i=0;i<K;i++) globalSumDiff[i]=0.0;
+        MPI_Reduce(sumDiff, globalSumDiff, K, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
         if(!rank){
             for(i=N/(size-1);i<N+N/(size-1);i++)
-                in_cluster[i-N/(size-1)]=all_in_cluster[i];
+                inCluster[i - N / (size - 1)]=allInCluster[i];
             temp2=0.0;
-            for(i=0;i<K;i++) temp2+=global_sum_diff[i];
+            for(i=0;i<K;i++) temp2+=globalSumDiff[i];
             count++;
         }
         MPI_Bcast(&temp2,1,MPI_FLOAT,0,MPI_COMM_WORLD);
         MPI_Barrier(MPI_COMM_WORLD);
         it++;
-        std::cout<<"Its "<<it<<" Times loop"<<std::endl;
+        //std::cout<<"Its "<<it<<" Times loop"<<std::endl;
     }while(fabs(temp2-temp1)>epsilon);
     end=MPI_Wtime();
     if(!rank)   {
@@ -141,7 +141,7 @@ int  main(int argc,char *argv[]){
     std::cout<<"|*Average time usage: "<<(end-start)/it<<" s"<<std::endl;
     std::cout<<"|*Expected iteration is: "<<loop<<" times "<<"it should be in "<<(end-start)/it*loop<<" s"<<std::endl;
 
-        writeData(data,in_cluster,N);
+        writeData(data, inCluster, N);
     }
     MPI_Finalize();
 
@@ -215,7 +215,7 @@ float getDistance(float vector1[], float point2[], int n){
 }
 
 //把N个数据点聚类，标出每个点属于哪个聚类
-void cluster(int n,int k,int d,float **data,float **cluster_center,int *local_in_cluster)
+void cluster(int n,int k,int d,float **data,float **cluster_center,int *localInCluster)
 {
     int i,j;
     float min;
@@ -226,7 +226,7 @@ void cluster(int n,int k,int d,float **data,float **cluster_center,int *local_in
             distance[i][j] = getDistance(data[i],cluster_center[j],d);
             if(distance[i][j]<min){
                 min=distance[i][j];
-                local_in_cluster[i]=j;
+                localInCluster[i]=j;
             }
         }
     }
@@ -234,17 +234,17 @@ void cluster(int n,int k,int d,float **data,float **cluster_center,int *local_in
 }
 
 //计算所有聚类的中心点与其数据点的距离之和
-float getDifference(int k,int n,int d,int *in_cluster,float **data,float **cluster_center,float *sum)
+float getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum)
 {
     int i,j;
     for(i=0;i<k;++i)
         for(j=0;j<n;++j)
             if(i==in_cluster[j])
-                sum[i]+=getDistance(data[j],cluster_center[i],d);
+                sum[i]+=getDistance(data[j], clusterCenter[i], d);
 }
 
 //计算每个聚类的中心点
-void getCenter(int k,int d,int n,int *in_cluster,float **data,float **cluster_center)
+void getCenter(int k,int d,int n,int *in_cluster,float **data,float **clusterCenter)
 {
     float **sum=array(k,d);  //存放每个聚类中心
     int i,j,q,count;
@@ -261,7 +261,7 @@ void getCenter(int k,int d,int n,int *in_cluster,float **data,float **cluster_ce
             }
         }
         for(q=0;q<d;q++)
-            cluster_center[i][q]=sum[i][q]/count;
+            clusterCenter[i][q]= sum[i][q] / count;
     }
 
     free(sum);
