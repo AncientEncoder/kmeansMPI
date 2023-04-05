@@ -13,7 +13,7 @@ void writeData(float **dataArray,int *inCluster,int N);
 float **loadData(const std::string &fileName,int size);
 float getDistance(float vector1[], float point2[], int n);
 void cluster(int n,int k,int d,float **data,float **cluster_center,int *localInCluster);
-float getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum);
+void getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum);
 void getCenter(int k,int d,int n,int *in_cluster,float **data,float **clusterCenter);
 BasePoint::Point dataCutter(std::string str);
 
@@ -43,7 +43,7 @@ int  main(int argc,char *argv[]){
         K=std::atoi(argv[4]);
         D=3;
         N=std::atoi(argv[5]);
-        epsilon=std::atoi(argv[2]);
+        epsilon=std::atof(argv[2]);
         loop=std::atoi(argv[3]);
         data=loadData(argv[1],std::atoi(argv[5]));  //rd data
         if(size==1||size>N||N%(size-1)){
@@ -69,12 +69,12 @@ int  main(int argc,char *argv[]){
     if(!rank){//give away data
         for(i=0;i<N;i+=(N/(size-1))){
             for(j=0;j<(N/(size-1));j++){
-                MPI_Send(data[i+j],D,MPI_FLOAT,(i+j)/(N/(size-1))+1,99,MPI_COMM_WORLD);
+                MPI_Send(data[i+j],D,MPI_FLOAT,(i+j)/(N/(size-1))+1,1,MPI_COMM_WORLD);
             }
         }
     }else{  //recv data from root
         for(i=0;i<(N/(size-1));i++){
-            MPI_Recv(data[i],D,MPI_FLOAT,0,99,MPI_COMM_WORLD,&status);
+            MPI_Recv(data[i],D,MPI_FLOAT,0,1,MPI_COMM_WORLD,&status);
         }
 
     }
@@ -159,7 +159,7 @@ int  main(int argc,char *argv[]){
         writeData(data, inCluster, N);
     }
     MPI_Finalize();
-
+    return 0;
 }
 
 
@@ -248,7 +248,7 @@ void cluster(int n,int k,int d,float **data,float **cluster_center,int *localInC
 }
 
 //计算所有聚类的中心点与其数据点的距离之和
-float getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum){
+void getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum){
     int i,j;
     for(i=0;i<k;++i)
         for(j=0;j<n;++j)
