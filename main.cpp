@@ -16,6 +16,7 @@ void cluster(int n,int k,int d,float **data,float **cluster_center,int *localInC
 float getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum);
 void getCenter(int k,int d,int n,int *in_cluster,float **data,float **clusterCenter);
 BasePoint::Point dataCutter(std::string str);
+
 int  main(int argc,char *argv[]){
     int i,j,it;
     it=0;
@@ -46,7 +47,7 @@ int  main(int argc,char *argv[]){
         loop=std::atoi(argv[3]);
         data=loadData(argv[1],std::atoi(argv[5]));  //rd data
         if(size==1||size>N||N%(size-1)){
-            std::cout<<"error k exit!";
+            std::cout<<"error N exit!";
             MPI_Abort(MPI_COMM_WORLD,1);  //exit while impossible to divide data
         }
     }
@@ -111,22 +112,36 @@ int  main(int argc,char *argv[]){
 
     do{   //main loop
         temp1=temp2;
-        if(!rank)    getCenter(K, D, N, inCluster, data, clusterCenter);  //update center
-        for(i=0;i<K;i++)    MPI_Bcast(clusterCenter[i], D, MPI_FLOAT, 0, MPI_COMM_WORLD);  //BCast center
+        if(!rank){
+            getCenter(K, D, N, inCluster, data, clusterCenter);  //update center
+        }
+        for(i=0;i<K;i++){
+            MPI_Bcast(clusterCenter[i], D, MPI_FLOAT, 0, MPI_COMM_WORLD);  //BCast center
+        }
         if(rank){
             cluster(N/(size-1), K, D, data, clusterCenter, localInCluster);
-            for(i=0;i<K;i++) sumDiff[i]=0.0;
+            for(i=0;i<K;i++){
+                sumDiff[i]=0.0;
+            }
             getDifference(K,N/(size-1), D, localInCluster, data, clusterCenter, sumDiff);
         }
         MPI_Gather(localInCluster, N / (size - 1), MPI_INT, allInCluster, N / (size - 1), MPI_INT, 0, MPI_COMM_WORLD);
-        if(!rank)
-            for(i=0;i<K;i++) globalSumDiff[i]=0.0;
+        if(!rank){
+            for(i=0;i<K;i++){
+                globalSumDiff[i]=0.0;
+            }
+        }
+
         MPI_Reduce(sumDiff, globalSumDiff, K, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
         if(!rank){
-            for(i=N/(size-1);i<N+N/(size-1);i++)
+            for(i=N/(size-1);i<N+N/(size-1);i++){
                 inCluster[i - N / (size - 1)]=allInCluster[i];
+            }
+
             temp2=0.0;
-            for(i=0;i<K;i++) temp2+=globalSumDiff[i];
+            for(i=0;i<K;i++){
+                temp2+=globalSumDiff[i];
+            }
             count++;
         }
         MPI_Bcast(&temp2,1,MPI_FLOAT,0,MPI_COMM_WORLD);
@@ -215,8 +230,7 @@ float getDistance(float vector1[], float point2[], int n){
 }
 
 //把N个数据点聚类，标出每个点属于哪个聚类
-void cluster(int n,int k,int d,float **data,float **cluster_center,int *localInCluster)
-{
+void cluster(int n,int k,int d,float **data,float **cluster_center,int *localInCluster){
     int i,j;
     float min;
     float **distance=array(n,k);  //存放每个数据点到每个中心点的距离
@@ -234,8 +248,7 @@ void cluster(int n,int k,int d,float **data,float **cluster_center,int *localInC
 }
 
 //计算所有聚类的中心点与其数据点的距离之和
-float getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum)
-{
+float getDifference(int k, int n, int d, int *in_cluster, float **data, float **clusterCenter, float *sum){
     int i,j;
     for(i=0;i<k;++i)
         for(j=0;j<n;++j)
@@ -244,8 +257,7 @@ float getDifference(int k, int n, int d, int *in_cluster, float **data, float **
 }
 
 //计算每个聚类的中心点
-void getCenter(int k,int d,int n,int *in_cluster,float **data,float **clusterCenter)
-{
+void getCenter(int k,int d,int n,int *in_cluster,float **data,float **clusterCenter){
     float **sum=array(k,d);  //存放每个聚类中心
     int i,j,q,count;
     for(i=0;i<k;i++)
