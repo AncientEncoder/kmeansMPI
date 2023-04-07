@@ -162,7 +162,6 @@ int main(int argc,char *argv[]){
         writeData(data, inCluster, N);
     }
     MPI_Finalize();
-    std::cout<<"MPI_Finalized"<<std::endl;
     return 0;
 }
 
