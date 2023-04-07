@@ -197,11 +197,11 @@ BasePoint::Point dataCutter(std::string str){
     }
     return point;
 }
-//从data.txt导入数据，要求首行格式：K=聚类数目,D=数据维度,N=数据量
+
 float **loadData(const std::string &fileName,int size){
     int i=0;
     float **arrayData;
-    arrayData=array(size, 3);  //生成数据数组
+    arrayData=array(size, 3);
     std::ifstream getFile;
     getFile.open(fileName,std::ios::in);
     if(!getFile.is_open()){
@@ -271,13 +271,16 @@ void getCenter(int k,int d,int n,int *in_cluster,float **data,float **clusterCen
         count=0;  //统计属于某个聚类内的所有数据点
         for(j=0;j<n;j++){
             if(i==in_cluster[j]){
-                for(q=0;q<d;q++)
+                for(q=0;q<d;q++){
                     sum[i][q]+=data[j][q];  //计算所属聚类的所有数据点的相应维数之和
+                }
+
                 count++;
             }
         }
-        for(q=0;q<d;q++)
+        for(q=0;q<d;q++){
             clusterCenter[i][q]= sum[i][q] / count;
+        }
     }
 
     free(sum);
