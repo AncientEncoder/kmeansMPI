@@ -17,7 +17,7 @@ void getDifference(int k, int n, int d, int *in_cluster, float **data, float **c
 void getCenter(int k,int d,int n,int *in_cluster,float **data,float **clusterCenter);
 BasePoint::Point dataCutter(std::string str);
 
-int  main(int argc,char *argv[]){
+int main(int argc,char *argv[]){
     int i,j,it;
     it=0;
     double start,end,epsilon;
@@ -46,9 +46,12 @@ int  main(int argc,char *argv[]){
         epsilon=std::atof(argv[2]);
         loop=std::atoi(argv[3]);
         data=loadData(argv[1],std::atoi(argv[5]));  //rd data
-        if(size==1||size>N||N%(size-1)){
-            std::cout<<"error N exit!";
+        if(size==1||size>N){
+            std::cerr<<"error N exit!";
             MPI_Abort(MPI_COMM_WORLD,1);  //exit while impossible to divide data
+        }
+        if (N%(size-1)){
+            N=N-N%(size-1);
         }
     }
     MPI_Bcast(&K,1,MPI_INT,0,MPI_COMM_WORLD);  //BCast from root
@@ -159,6 +162,7 @@ int  main(int argc,char *argv[]){
         writeData(data, inCluster, N);
     }
     MPI_Finalize();
+    std::cout<<"MPI_Finalized"<<std::endl;
     return 0;
 }
 
